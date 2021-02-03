@@ -176,6 +176,7 @@ async function showMask(userAddress, maskId, retried) {
   mask.find('.mask-link').attr('href', `https://www.thehashmasks.com/detail/${maskId}`);
 
   mask.find('.mask-owner-link').attr('href', `https://etherscan.io/address/${userAddress}`);
+  mask.find('.mask-opensea-link').attr('href', `https://opensea.io/assets/0xc2c747e0f7004f9e8817db2ca4997657a7746928/${maskId}`);
 
   mask.find('.mask-rarity').html(`${maskdata.attributes.TotalPPercentileRank}th (${getZeroes(maskdata.attributes.TotalP*100)} zeroes)`);
 

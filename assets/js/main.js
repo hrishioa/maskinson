@@ -13,21 +13,34 @@ let users = {
 
 }
 
-if(window.ethereum) {
+$(window).on('load', () => {
   console.log("Enabling...");
-  window.web3 = new Web3(window.ethereum);
-  window.ethereum.enable().then(() => {
-    console.log("Enabled.");
-    loadContracts();
-    $(".loading-message").hide();
-    $('.input-area').show();
-    let urlPieces = window.location.href.split("?");
-    if(urlPieces.length > 1)
-      loadFromInput(urlPieces[urlPieces.length-1], true);
-  })
-} else {
-  appendToResults("No metamask detected.", false);
-}
+  window.web3 = new Web3(new Web3.providers.HttpProvider('https://mainnet.infura.io/v3/52af32445ffa42c98cfa76c3ed62cf2d'));
+  console.log("Enabled.");
+  loadContracts();
+  $(".loading-message").hide();
+  $('.input-area').show();
+  let urlPieces = window.location.href.split("?");
+  if(urlPieces.length > 1)
+    loadFromInput(urlPieces[urlPieces.length-1], true);
+})
+
+// if(window.ethereum) {
+//   console.log("Enabling...");
+//   window.web3 = new Web3(window.ethereum);
+
+//   window.ethereum.enable().then(() => {
+//     console.log("Enabled.");
+//     loadContracts();
+//     $(".loading-message").hide();
+//     $('.input-area').show();
+//     let urlPieces = window.location.href.split("?");
+//     if(urlPieces.length > 1)
+//       loadFromInput(urlPieces[urlPieces.length-1], true);
+//   })
+// } else {
+//   appendToResults("No metamask detected.", false);
+// }
 
 function loadContracts() {
   hashmasks.contract = new window.web3.eth.Contract(hashmasks.ABI, hashmasks.address);

@@ -51,6 +51,64 @@ function loadContracts() {
   })
 }
 
+async function loadOpenSea(maskId) {
+  try {
+    let response = await fetch(`https://api.opensea.io/api/v1/asset/0xc2c747e0f7004f9e8817db2ca4997657a7746928/${maskId}`);
+    let mask = await response.json();
+
+    if(mask.success === false)
+      return false;
+
+    let maskos = {
+      lastSale: processSale(mask.last_sale),
+      ownerName: mask.owner && mask.owner.user && mask.owner.user.username || null,
+      orders: mask.orders.map(processOrder)
+    };
+
+    return maskos;
+  } catch(err) {
+    console.log("Error getting opensea for mask ",maskId," - ",err);
+    return null;
+  }
+}
+
+function processOrder(order) {
+  let pOrder = { // TODO: Find out how to recognize other types of orders
+    from: order.maker && ((order.maker.user && order.maker.user.username) || (order.maker.address)) || "Unknown",
+    fromLink: order.maker && order.maker.address && `https://opensea.io/accounts/${order.maker.address}` || null,
+    usdValue: (parseFloat(order.current_price)/(10**parseFloat(order.payment_token_contract.decimals)))*parseFloat(order.payment_token_contract.usd_price),
+    tokenValue: (parseFloat(order.current_price)/(10**parseFloat(order.payment_token_contract.decimals))),
+    tokenName: order.payment_token_contract.symbol,
+    createdDate: new Date(order.created_date)
+  }
+
+  return pOrder;
+}
+
+function processSale(lastSale) {
+  if(!lastSale)
+    return false;
+
+  let pSale = {};
+
+  pSale.date = new Date(lastSale.event_timestamp);
+  pSale.timestamp = pSale.date.getTime();
+
+  pSale.usdValue = (parseFloat(lastSale.total_price)/(10**parseFloat(lastSale.payment_token.decimals)))*parseFloat(lastSale.payment_token.usd_price);
+  pSale.tokenValue = (parseFloat(lastSale.total_price)/(10**parseFloat(lastSale.payment_token.decimals)));
+  pSale.tokenName = lastSale.payment_token.symbol;
+  if(lastSale.transaction && lastSale.transaction.transaction_hash) {
+    pSale.txHash = lastSale.transaction.transaction_hash;
+    pSale.txLink = `https://etherscan.io/tx/${lastSale.transaction.transaction_hash}`;
+  }
+  pSale.from = lastSale.transaction && lastSale.transaction.from_account &&
+    ((lastSale.transaction.from_account.user && lastSale.transaction.from_account.user.username) || lastSale.transaction.from_account.address);
+  pSale.fromLink = lastSale.transaction.from_account && lastSale.transaction.from_account.address && `https://opensea.io/accounts/${lastSale.transaction.from_account.address}` || null;
+  pSale.collectedDate = new Date();
+
+  return pSale;
+}
+
 async function loadOwned(address) {
   if(!window.web3.utils.isAddress(address))
     return appendToResults("Invalid address", false);
@@ -143,6 +201,8 @@ async function loadMask(userAddress, maskId) {
 
   users[userAddress].masks[maskId].attributes = maskData;
 
+  users[userAddress].masks[maskId].openseaData = await loadOpenSea(maskId);
+
   await showMask(userAddress, maskId);
 }
 
@@ -213,6 +273,38 @@ async function showMask(userAddress, maskId, retried) {
   mask.find('.mask-attribute-template').clone().removeClass('mask-attribute-template').addClass('mask-attribute').html(`${maskdata.attributes.MaskName} masks are ${maskdata.attributes.MaskP*100.0}% common.`).insertBefore(mask.find('.mask-attribute-template')).show();
 
   mask.find('.mask-unclaimed-ncts').html(`Unclaimed: ${maskdata.unclaimedNCT.toFixed(2)} NCT`).show();
+
+  if(maskdata.openseaData && maskdata.openseaData.lastSale) {
+    mask.find('.mask-last-sale-data .order-link').html(maskdata.openseaData.lastSale.from.slice(0,6)+"...");
+    mask.find('.mask-last-sale-data .order-link').attr('href', maskdata.openseaData.lastSale.fromLink);
+    mask.find('.mask-last-sale-data .order-amount').html(`${parseFloat(maskdata.openseaData.lastSale.tokenValue).toFixed(2)} ${maskdata.openseaData.lastSale.tokenName}`)
+    mask.find('.mask-last-sale-meta').html(`${parseFloat(maskdata.openseaData.lastSale.usdValue).toFixed(2)} USD (${maskdata.openseaData.lastSale.date.toLocaleDateString()})`);
+    mask.find('.mask-last-sale-content').show();
+  } else {
+    mask.find('.mask-last-sale-content').hide();
+  }
+
+  if(maskdata.openseaData && maskdata.openseaData.orders && maskdata.openseaData.orders.length) {
+    maskdata.openseaData.orders.map(order => {
+      let orderElement = mask.find('.mask-order-data-template')
+                              .clone()
+                              .removeClass('mask-order-data-template')
+                              .addClass('mask-order-data')
+                              .addClass('mask-orders-content')
+                              .insertBefore(mask.find('.mask-order-data-template'));
+
+      orderElement.find('.order-link').html(order.from.slice(0,6)+"...");
+      orderElement.find('.order-link').attr('href', order.fromLink);
+      orderElement.find('.order-amount').html(`${parseFloat(order.tokenValue).toFixed(2)} ${order.tokenName}`)
+      orderElement.find('.mask-order-meta').html(`${parseFloat(order.usdValue).toFixed(2)} USD (${order.createdDate.toLocaleDateString()})`);
+
+      orderElement.show();
+    });
+
+    mask.find('.mask-orders-content').show();
+  } else {
+    mask.find('.mask-orders-content').hide();
+  }
 
   if(maskdata.attributes.ItemName && maskdata.attributes.ItemName !== "No Item")
     mask.find('.mask-attribute-template').clone().removeClass('mask-attribute-template').addClass('mask-attribute').html(`${maskdata.attributes.ItemName}s are ${maskdata.attributes.ItemP*100.0}% common.`).insertBefore(mask.find('.mask-attribute-template')).show();

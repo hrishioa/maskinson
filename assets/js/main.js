@@ -25,6 +25,72 @@ $(window).on('load', () => {
     loadFromInput(urlPieces[urlPieces.length-1], true);
 })
 
+class AsyncQueue {
+  constructor(intervalMs) {
+    this.queue = [];
+    this.index = 0;
+    this.running = false;
+    this.intervalMs = intervalMs;
+  }
+
+  add(asyncFunction, doNotStart, retries) {
+    let thisQueue = this;
+    return new Promise((resolve, reject) => {
+      let job = {
+        task: () => {
+          asyncFunction().then(value => resolve(value)).catch(err => reject(err));
+        }
+      };
+
+      if(retries && retries !== 0) {
+        job = {
+          task: () => {
+            asyncFunction().then(value => resolve(value)).catch(err => {
+              return thisQueue.add(asyncFunction, doNotStart, retries-1).then(val => resolve(val)).catch(err => reject(err));
+            });
+          }
+        }
+      }
+
+      this.queue.push(job);
+      if(!doNotStart && !this.interval)
+        this.start();
+    })
+  }
+
+  decorator(asyncFunction, doNotStart, retries) {
+    let thisQueue = this;
+    return function () {
+      return thisQueue.add(() => asyncFunction.apply(this, arguments), doNotStart, retries);
+    }
+  }
+
+  runNext() {
+    var thisQueue = this;
+    return () => {
+      if(thisQueue.index < thisQueue.queue.length) {
+        thisQueue.index++;
+        if(thisQueue.index >= thisQueue.queue.length)
+          thisQueue.stop();
+        thisQueue.queue[thisQueue.index-1].task();
+      }
+    }
+  }
+
+  start() {
+    if(this.interval)
+      throw Error ("Queue has already started");
+    this.interval = setInterval(this.runNext(), this.intervalMs);
+  }
+
+  stop() {
+    if(this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+}
+
 // if(window.ethereum) {
 //   console.log("Enabling...");
 //   window.web3 = new Web3(window.ethereum);
@@ -51,10 +117,16 @@ function loadContracts() {
   })
 }
 
-async function loadOpenSea(maskId) {
+let openseaQueue = new AsyncQueue(250);
+
+async function loadOpenSea(maskId, retries) {
   try {
-    let response = await fetch(`https://api.opensea.io/api/v1/asset/0xc2c747e0f7004f9e8817db2ca4997657a7746928/${maskId}`);
+    let response = await openseaQueue.add(() => fetch(`https://api.opensea.io/api/v1/asset/0xc2c747e0f7004f9e8817db2ca4997657a7746928/${maskId}`));
+
     let mask = await response.json();
+
+    if(mask.detail && mask.detail.match(/throttled/i) && retries > 0)
+      return await loadOpenSea(maskId, retries-1);
 
     if(mask.success === false)
       return false;
@@ -62,7 +134,7 @@ async function loadOpenSea(maskId) {
     let maskos = {
       lastSale: processSale(mask.last_sale),
       ownerName: mask.owner && mask.owner.user && mask.owner.user.username || null,
-      orders: mask.orders.map(processOrder)
+      orders: mask.orders && mask.orders.map(processOrder)
     };
 
     return maskos;
@@ -71,6 +143,16 @@ async function loadOpenSea(maskId) {
     return null;
   }
 }
+
+function timeoutPromise(func, timeout) {
+  console.log("Running timeout for ",timeout);
+  return new Promise((resolve, reject) => {
+    window.setTimeout(() => { // TODO: Add a catch handler later
+      resolve(func());
+    }, timeout)
+  })
+}
+
 
 function processOrder(order) {
   let pOrder = { // TODO: Find out how to recognize other types of orders
@@ -144,10 +226,10 @@ async function loadOwned(address) {
 }
 
 async function loadMaskFromUser(userAddress, userMaskIndex) {
-  console.log("Loading mask ",userMaskIndex," for owner ", userAddress);
+  // console.log("Loading mask ",userMaskIndex," for owner ", userAddress);
   let maskId = await hashmasks.contract.methods.tokenOfOwnerByIndex(userAddress, userMaskIndex).call();
   maskId = parseInt(maskId);
-  console.log("Got mask id ",maskId);
+  // console.log("Got mask id ",maskId);
 
   if(!users[userAddress]) {
     users[userAddress] = {};
@@ -179,7 +261,7 @@ function getMaskData(maskId) {
 }
 
 async function loadMask(userAddress, maskId) {
-  console.log("Loading mask from ",`/assets/resources/maskdata/${maskId}.json`,"...");
+  // console.log("Loading mask from ",`/assets/resources/maskdata/${maskId}.json`,"...");
 
   if(!users[userAddress].masks) {
     users[userAddress].masks = {};
@@ -200,8 +282,6 @@ async function loadMask(userAddress, maskId) {
   users[userAddress].masks[maskId].unclaimedNCT = parseFloat(await nct.contract.methods.accumulated(maskId).call())/10**(nct.decimals ? nct.decimals : 18);
 
   users[userAddress].masks[maskId].attributes = maskData;
-
-  users[userAddress].masks[maskId].openseaData = await loadOpenSea(maskId);
 
   await showMask(userAddress, maskId);
 }
@@ -242,12 +322,14 @@ async function showMask(userAddress, maskId, retried) {
   }
   img.src = maskdata.attributes.ImageLink;
 
+  let maskIndex = (maskId+10141) % (16384);
+
   let imgbackup = new Image();
   imgbackup.onload = function() {
     if(!mainImgLoaded)
-      mask.find('.mask-img').attr("src", `https://hashmasksstore.blob.core.windows.net/hashmaskspreview/${maskId}.png`);
+      mask.find('.mask-img').attr("src", `https://hashmasksstore.blob.core.windows.net/hashmaskspreview/${maskIndex}.png`);
   }
-  imgbackup.src = `https://hashmasksstore.blob.core.windows.net/hashmaskspreview/${maskId}.png`;
+  imgbackup.src = `https://hashmasksstore.blob.core.windows.net/hashmaskspreview/${maskIndex}.png`;
 
   let maskTitle = `${maskdata.attributes.SkinName} skinned, ${maskdata.attributes.EyesName} eyed ${maskdata.attributes.CharacterName} ${maskdata.attributes.MaskName}${maskdata.attributes.ItemName && maskdata.attributes.ItemName !== "No Item" ? ` with ${maskdata.attributes.ItemName}` : ""}`;
 
@@ -274,43 +356,54 @@ async function showMask(userAddress, maskId, retried) {
 
   mask.find('.mask-unclaimed-ncts').html(`Unclaimed: ${maskdata.unclaimedNCT.toFixed(2)} NCT`).show();
 
-  if(maskdata.openseaData && maskdata.openseaData.lastSale) {
-    mask.find('.mask-last-sale-data .order-link').html(maskdata.openseaData.lastSale.from.slice(0,6)+"...");
-    mask.find('.mask-last-sale-data .order-link').attr('href', maskdata.openseaData.lastSale.fromLink);
-    mask.find('.mask-last-sale-data .order-amount').html(`${parseFloat(maskdata.openseaData.lastSale.tokenValue).toFixed(2)} ${maskdata.openseaData.lastSale.tokenName}`)
-    mask.find('.mask-last-sale-meta').html(`${parseFloat(maskdata.openseaData.lastSale.usdValue).toFixed(2)} USD (${maskdata.openseaData.lastSale.date.toLocaleDateString()})`);
-    mask.find('.mask-last-sale-content').show();
-  } else {
-    mask.find('.mask-last-sale-content').hide();
-  }
+  mask.find('.mask-last-sale-content').hide();
+  mask.find('.mask-orders-content').hide();
 
-  if(maskdata.openseaData && maskdata.openseaData.orders && maskdata.openseaData.orders.length) {
-    maskdata.openseaData.orders.map(order => {
-      let orderElement = mask.find('.mask-order-data-template')
-                              .clone()
-                              .removeClass('mask-order-data-template')
-                              .addClass('mask-order-data')
-                              .addClass('mask-orders-content')
-                              .insertBefore(mask.find('.mask-order-data-template'));
+  let openseaData = maskdata.openseaData && Promise.resolve(mask.data.openseaData) || loadOpenSea(maskId, 5);
 
-      orderElement.find('.order-link').html(order.from.slice(0,6)+"...");
-      orderElement.find('.order-link').attr('href', order.fromLink);
-      orderElement.find('.order-amount').html(`${parseFloat(order.tokenValue).toFixed(2)} ${order.tokenName}`)
-      orderElement.find('.mask-order-meta').html(`${parseFloat(order.usdValue).toFixed(2)} USD (${order.createdDate.toLocaleDateString()})`);
+  openseaData.then(osData => {
+    console.log("Loaded openseadata for mask ",maskId);
 
-      orderElement.show();
-    });
+    maskdata.openseaData = osData;
 
-    mask.find('.mask-orders-content').show();
-  } else {
-    mask.find('.mask-orders-content').hide();
-  }
+    if(maskdata.openseaData && maskdata.openseaData.lastSale) {
+      mask.find('.mask-last-sale-data .order-link').html(maskdata.openseaData.lastSale.from.slice(0,6)+"...");
+      mask.find('.mask-last-sale-data .order-link').attr('href', maskdata.openseaData.lastSale.fromLink);
+      mask.find('.mask-last-sale-data .order-amount').html(`${parseFloat(maskdata.openseaData.lastSale.tokenValue).toFixed(2)} ${maskdata.openseaData.lastSale.tokenName}`)
+      mask.find('.mask-last-sale-meta').html(`${parseFloat(maskdata.openseaData.lastSale.usdValue).toFixed(2)} USD (${maskdata.openseaData.lastSale.date.toLocaleDateString()})`);
+      mask.find('.mask-last-sale-content').show();
+    }
+
+    if(maskdata.openseaData && maskdata.openseaData.orders && maskdata.openseaData.orders.length) {
+      maskdata.openseaData.orders.map(order => {
+        let orderElement = mask.find('.mask-order-data-template')
+                                .clone()
+                                .removeClass('mask-order-data-template')
+                                .addClass('mask-order-data')
+                                .addClass('mask-orders-content')
+                                .insertBefore(mask.find('.mask-order-data-template'));
+
+        orderElement.find('.order-link').html(order.from.slice(0,6)+"...");
+        orderElement.find('.order-link').attr('href', order.fromLink);
+        orderElement.find('.order-amount').html(`${parseFloat(order.tokenValue).toFixed(2)} ${order.tokenName}`)
+        orderElement.find('.mask-order-meta').html(`${parseFloat(order.usdValue).toFixed(2)} USD (${order.createdDate.toLocaleDateString()})`);
+
+        orderElement.show();
+      });
+
+      mask.find('.mask-orders-content').show();
+    }
+  })
 
   if(maskdata.attributes.ItemName && maskdata.attributes.ItemName !== "No Item")
     mask.find('.mask-attribute-template').clone().removeClass('mask-attribute-template').addClass('mask-attribute').html(`${maskdata.attributes.ItemName}s are ${maskdata.attributes.ItemP*100.0}% common.`).insertBefore(mask.find('.mask-attribute-template')).show();
 
   mask.insertBefore('.mask-template').show();
   sortMasks();
+}
+
+function showOpenSea() {
+
 }
 
 function getZeroes(number) {

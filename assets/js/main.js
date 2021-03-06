@@ -118,6 +118,7 @@ function loadContracts() {
 }
 
 let openseaQueue = new AsyncQueue(250);
+let maskQueue = new AsyncQueue(50);
 
 async function loadOpenSea(maskId, retries) {
   try {
@@ -345,7 +346,7 @@ async function showMask(userAddress, maskId, retried) {
   mask.find('.mask-owner-link').attr('href', `https://etherscan.io/address/${userAddress}`);
   mask.find('.mask-opensea-link').attr('href', `https://opensea.io/assets/0xc2c747e0f7004f9e8817db2ca4997657a7746928/${maskId}`);
 
-  mask.find('.mask-rarity').html(`${maskdata.attributes.TotalPPercentileRank}th (${getZeroes(maskdata.attributes.TotalP*100)} zeroes)`);
+  mask.find('.mask-rarity').html(`${maskdata.attributes.TotalPPercentileRank+1}th (${getZeroes(maskdata.attributes.TotalP*100)} zeroes)`);
 
   mask.find('.mask-rarity-text').html(`This mask is ${maskdata.attributes.TotalP*100}% common (${getZeroes(maskdata.attributes.TotalP*100)} zeroes) and ranked ${maskdata.attributes.TotalPPercentileRank}th (rank 1 is the rarest).`);
 
@@ -434,16 +435,22 @@ async function loadFromInput(inputVal, silent) {
       return await loadOwned(inputVal);
     }
 
-    inputVal = parseInt(inputVal);
+    inputVals = inputVal.split(",");
+    inputVals.map(iV => parseFloat(iV)).filter(iV => !isNaN(iV)).filter(iV => iV >= 0 && iV <= 16384);
 
-    if(isNaN(inputVal) || inputVal < 0 || inputVal > 16384)
-      if(!silent)
-        return appendToResults("Invalid input");
-      else
-        return;
+    for(let i=0;i<inputVals.length;i++)
+      maskQueue.add(() => loadMaskFromId(inputVals[i]));
 
-    appendToResults("Loading mask "+inputVal+"...", true);
-    await loadMaskFromId(inputVal);
+    // inputVal = parseInt(inputVal);
+
+    // if(isNaN(inputVal) || inputVal < 0 || inputVal > 16384)
+    //   if(!silent)
+    //     return appendToResults("Invalid input");
+    //   else
+    //     return;
+
+    // appendToResults("Loading mask "+inputVal+"...", true);
+    // await loadMaskFromId(inputVal);
   } catch(err) {
     console.log("Error loading masks - ",err);
     if(!silent)

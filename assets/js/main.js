@@ -435,7 +435,7 @@ async function loadFromInput(inputVal, silent) {
       return await loadOwned(inputVal);
     }
 
-    inputVals = inputVal.split(",");
+    inputVals = inputVal.replace(/\s/g, '').split(",");
     inputVals.map(iV => parseFloat(iV)).filter(iV => !isNaN(iV)).filter(iV => iV >= 0 && iV <= 16384);
 
     for(let i=0;i<inputVals.length;i++)

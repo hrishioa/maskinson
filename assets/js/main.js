@@ -287,10 +287,20 @@ async function loadMask(userAddress, maskId) {
   await showMask(userAddress, maskId);
 }
 
-function sortMasks() {
+function sortMasksByRarity() {
   let maskSection = $('.masks-section'), masks = maskSection.find('.mask');
   [].sort.call(masks, function(a,b) {
     return +$(a).data('TotalPRank') - +$(b).data('TotalPRank');
+  });
+  masks.each(function(){
+    maskSection.append(this);
+  });
+}
+
+function sortMasksByHighestOffer() {
+  let maskSection = $('.masks-section'), masks = maskSection.find('.mask');
+  [].sort.call(masks, function(a,b) {
+    return +$(b).data('highestOffer') - +$(a).data('highestOffer');
   });
   masks.each(function(){
     maskSection.append(this);
@@ -314,6 +324,7 @@ async function showMask(userAddress, maskId, retried) {
   let maskdata = users[userAddress].masks[maskId];
 
   mask.data('TotalPRank', maskdata.attributes.TotalPPercentileRank);
+  mask.data('highestOffer', 0);
 
   let img = new Image();
   let mainImgLoaded = false;
@@ -376,7 +387,9 @@ async function showMask(userAddress, maskId, retried) {
     }
 
     if(maskdata.openseaData && maskdata.openseaData.orders && maskdata.openseaData.orders.length) {
-      maskdata.openseaData.orders.map(order => {
+      mask.data('highestOffer', maskdata.openseaData.orders.reduce((acc, cur) => acc < cur.usdValue ? cur.usdValue : acc, 0));
+
+      maskdata.openseaData.orders.sort((a,b) => b.usdValue-a.usdValue).map(order => {
         let orderElement = mask.find('.mask-order-data-template')
                                 .clone()
                                 .removeClass('mask-order-data-template')
@@ -400,7 +413,7 @@ async function showMask(userAddress, maskId, retried) {
     mask.find('.mask-attribute-template').clone().removeClass('mask-attribute-template').addClass('mask-attribute').html(`${maskdata.attributes.ItemName}s are ${maskdata.attributes.ItemP*100.0}% common.`).insertBefore(mask.find('.mask-attribute-template')).show();
 
   mask.insertBefore('.mask-template').show();
-  sortMasks();
+  sortMasksByRarity();
 }
 
 function showOpenSea() {
